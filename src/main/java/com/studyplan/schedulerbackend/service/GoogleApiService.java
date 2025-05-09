@@ -14,8 +14,10 @@ import com.google.api.services.classroom.model.Date;
 import com.studyplan.schedulerbackend.entity.Assignment;
 import com.studyplan.schedulerbackend.entity.OAuth2Token;
 import com.studyplan.schedulerbackend.entity.User;
+import com.studyplan.schedulerbackend.entity.UserIdentity;
 import com.studyplan.schedulerbackend.repository.AssignmentRepository;
 import com.studyplan.schedulerbackend.repository.OAuth2TokenRepository;
+import com.studyplan.schedulerbackend.repository.UserIdentityRepository;
 import com.studyplan.schedulerbackend.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,27 +31,28 @@ import java.security.GeneralSecurityException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 public class GoogleApiService {
     private static final Logger logger = LoggerFactory.getLogger(GoogleApiService.class);
+
     private final UserRepository userRepository;
+    private final UserIdentityRepository identityRepository;
     private final OAuth2TokenRepository tokenRepository;
     private final AssignmentRepository assignmentRepository;
     private final String clientId;
     private final String clientSecret;
     private final String applicationName = "StudyPlanScheduler";
 
-    public GoogleApiService(
-            UserRepository userRepository,
-            OAuth2TokenRepository tokenRepository,
-            AssignmentRepository assignmentRepository,
-            @Value("${spring.security.oauth2.client.registration.google.client-id}") String clientId,
-            @Value("${spring.security.oauth2.client.registration.google.client-secret}") String clientSecret) {
+    public GoogleApiService(UserRepository userRepository,
+                            UserIdentityRepository identityRepository,
+                            OAuth2TokenRepository tokenRepository,
+                            AssignmentRepository assignmentRepository,
+                            @Value("${spring.security.oauth2.client.registration.google.client-id}") String clientId,
+                            @Value("${spring.security.oauth2.client.registration.google.client-secret}") String clientSecret) {
         this.userRepository = userRepository;
+        this.identityRepository = identityRepository;
         this.tokenRepository = tokenRepository;
         this.assignmentRepository = assignmentRepository;
         this.clientId = clientId;
@@ -73,7 +76,7 @@ public class GoogleApiService {
         if (credential.getExpiresInSeconds() != null && credential.getExpiresInSeconds() < 60) {
             logger.info("Access token expired for user id={}. Attempting to refresh.", userId);
             int retries = 3;
-            while (retries > 0) {
+            while (retries-- > 0) {
                 try {
                     if (credential.refreshToken()) {
                         token.setAccessToken(credential.getAccessToken());
@@ -85,7 +88,6 @@ public class GoogleApiService {
                         throw new IOException("Failed to refresh access token");
                     }
                 } catch (IOException e) {
-                    retries--;
                     if (retries == 0) {
                         logger.error("Failed to refresh token for user id={} after retries", userId, e);
                         throw e;
@@ -101,6 +103,11 @@ public class GoogleApiService {
         }
 
         return credential;
+    }
+
+    private boolean hasIdentity(User user, String provider) {
+        return user.getIdentities().stream()
+                .anyMatch(identity -> provider.equals(identity.getProvider()));
     }
 
     private Classroom getClassroomService(Credential credential) throws IOException, GeneralSecurityException {
@@ -123,13 +130,16 @@ public class GoogleApiService {
 
     public void createCalendarEvent(String email, String summary, Instant startTime) {
         try {
-            User user = userRepository.findByEmailAndProvider(email, "google")
+            User user = userRepository.findByEmail(email)
                     .orElseThrow(() -> new IllegalArgumentException("User not found: " + email));
+            if (!hasIdentity(user, "google")) {
+                throw new IllegalStateException("User is not authenticated with Google");
+            }
+
             Credential credential = getCredential(user.getId(), "google");
             Calendar calendarService = getCalendarService(credential);
 
-            Event event = new Event()
-                    .setSummary(summary);
+            Event event = new Event().setSummary(summary);
             EventDateTime start = new EventDateTime()
                     .setDateTime(new com.google.api.client.util.DateTime(startTime.toEpochMilli()))
                     .setTimeZone(ZoneId.systemDefault().getId());
@@ -149,8 +159,12 @@ public class GoogleApiService {
 
     public List<String> getClassroomCourses(String email) {
         try {
-            User user = userRepository.findByEmailAndProvider(email, "google")
+            User user = userRepository.findByEmail(email)
                     .orElseThrow(() -> new IllegalArgumentException("User not found: " + email));
+            if (!hasIdentity(user, "google")) {
+                throw new IllegalStateException("User is not authenticated with Google");
+            }
+
             Credential credential = getCredential(user.getId(), "google");
             Classroom classroomService = getClassroomService(credential);
 
@@ -158,14 +172,13 @@ public class GoogleApiService {
                     .setCourseStates(List.of("ACTIVE"))
                     .execute()
                     .getCourses();
-            if (courses == null) {
-                courses = List.of();
-            }
+            if (courses == null) courses = List.of();
 
             List<String> courseNames = new ArrayList<>();
             for (Course course : courses) {
                 courseNames.add(course.getName() + " (" + course.getId() + ")");
             }
+
             logger.info("Retrieved {} courses for user: {}", courseNames.size(), email);
             return courseNames;
         } catch (IOException | GeneralSecurityException e) {
@@ -174,14 +187,14 @@ public class GoogleApiService {
         }
     }
 
-    @Scheduled(fixedRate = 3600000) // Run every hour
+    @Scheduled(fixedRate = 3600000)
     public void syncClassroomAssignments() {
-        List<User> googleUsers = userRepository.findAll().stream()
-                .filter(user -> "google".equals(user.getProvider()))
-                .toList();
-        for (User user : googleUsers) {
-            logger.debug("Syncing assignments for user: {}", user.getEmail());
-            syncUserAssignments(user);
+        List<User> users = userRepository.findAll();
+        for (User user : users) {
+            if (hasIdentity(user, "google")) {
+                logger.debug("Syncing assignments for user: {}", user.getEmail());
+                syncUserAssignments(user);
+            }
         }
     }
 
@@ -193,18 +206,16 @@ public class GoogleApiService {
                 logger.warn("No OAuth2 token for user: {}", user.getEmail());
                 return;
             }
+
             Credential credential = getCredential(user.getId(), "google");
             Classroom classroomService = getClassroomService(credential);
             Calendar calendarService = getCalendarService(credential);
 
-            // Get active courses
             List<Course> courses = classroomService.courses().list()
                     .setCourseStates(List.of("ACTIVE"))
                     .execute()
                     .getCourses();
-            if (courses == null) {
-                courses = List.of();
-            }
+            if (courses == null) courses = List.of();
 
             for (Course course : courses) {
                 String courseId = course.getId();
@@ -212,54 +223,46 @@ public class GoogleApiService {
                         .setCourseWorkStates(List.of("PUBLISHED"))
                         .execute()
                         .getCourseWork();
-                if (courseWorks == null) {
-                    courseWorks = List.of();
-                }
+                if (courseWorks == null) courseWorks = List.of();
 
-                for (CourseWork courseWork : courseWorks) {
-                    String assignmentId = courseWork.getId();
-                    String title = courseWork.getTitle();
+                for (CourseWork work : courseWorks) {
+                    String assignmentId = work.getId();
+                    String title = work.getTitle();
                     Instant dueDate = null;
-                    if (courseWork.getDueDate() != null && courseWork.getDueTime() != null) {
-                        Date dueDateObj = courseWork.getDueDate();
-                        com.google.api.services.classroom.model.TimeOfDay dueTimeObj = courseWork.getDueTime();
+
+                    if (work.getDueDate() != null && work.getDueTime() != null) {
+                        Date dueDateObj = work.getDueDate();
+                        var timeObj = work.getDueTime();
                         ZonedDateTime dueDateTime = ZonedDateTime.of(
                                 dueDateObj.getYear(),
                                 dueDateObj.getMonth(),
                                 dueDateObj.getDay(),
-                                dueTimeObj.getHours() != null ? dueTimeObj.getHours() : 0,
-                                dueTimeObj.getMinutes() != null ? dueTimeObj.getMinutes() : 0,
+                                timeObj.getHours() != null ? timeObj.getHours() : 0,
+                                timeObj.getMinutes() != null ? timeObj.getMinutes() : 0,
                                 0,
                                 0,
                                 ZoneId.of("UTC"));
                         dueDate = dueDateTime.toInstant();
                     }
 
-                    Optional<Assignment> existingAssignment = assignmentRepository.findByUserIdAndCourseIdAndAssignmentId(
-                            user.getId(), courseId, assignmentId);
-                    if (existingAssignment.isEmpty()) {
+                    if (assignmentRepository.findByUserIdAndCourseIdAndAssignmentId(user.getId(), courseId, assignmentId).isEmpty()) {
                         Assignment assignment = new Assignment(user, courseId, assignmentId, title, dueDate);
-                        if (dueDate != null) {
-                            Event event = new Event()
-                                    .setSummary("Assignment Due: " + title);
-                            EventDateTime start = new EventDateTime()
-                                    .setDateTime(new com.google.api.client.util.DateTime(dueDate.toEpochMilli()))
-                                    .setTimeZone(ZoneId.systemDefault().getId());
-                            EventDateTime end = new EventDateTime()
-                                    .setDateTime(new com.google.api.client.util.DateTime(dueDate.plusSeconds(3600).toEpochMilli()))
-                                    .setTimeZone(ZoneId.systemDefault().getId());
-                            event.setStart(start);
-                            event.setEnd(end);
 
+                        if (dueDate != null) {
+                            Event event = new Event().setSummary("Assignment Due: " + title);
+                            event.setStart(new EventDateTime().setDateTime(new com.google.api.client.util.DateTime(dueDate.toEpochMilli())).setTimeZone(ZoneId.systemDefault().getId()));
+                            event.setEnd(new EventDateTime().setDateTime(new com.google.api.client.util.DateTime(dueDate.plusSeconds(3600).toEpochMilli())).setTimeZone(ZoneId.systemDefault().getId()));
                             Event createdEvent = calendarService.events().insert("primary", event).execute();
                             assignment.setCalendarEventId(createdEvent.getId());
                             logger.info("Created calendar event for assignment: {}, user: {}", title, user.getEmail());
                         }
+
                         assignmentRepository.save(assignment);
                         logger.info("Saved new assignment: {}, course: {}, user: {}", title, courseId, user.getEmail());
                     }
                 }
             }
+
             logger.info("Synced assignments for user: {}", user.getEmail());
         } catch (IOException | GeneralSecurityException e) {
             logger.error("Failed to sync assignments for user {}: {}", user.getEmail(), e.getMessage(), e);

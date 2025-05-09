@@ -39,6 +39,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String token = header.substring(7);
             try {
                 Jwt jwt = jwtDecoder.decode(token);
+                logger.info("JWT claims: subject={}, roles={}", jwt.getSubject(), jwt.getClaim("roles"));
                 String username = jwt.getSubject();
                 Object rolesClaim = jwt.getClaim("roles");
                 List<String> roles = new ArrayList<>();
@@ -51,12 +52,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 List<SimpleGrantedAuthority> authorities = roles.stream()
                         .map(SimpleGrantedAuthority::new)
                         .collect(Collectors.toList());
-                logger.info("JWT validated for user: {}", username);
+                logger.info("JWT validated for user: {}, authorities: {}", username, authorities);
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(username, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (JwtException e) {
-                logger.error("JWT validation failed for request {}: {}", request.getRequestURI(), e.getMessage(), e);
+                logger.error("JWT validation failed: token={}, error={}", token, e.getMessage(), e);
                 SecurityContextHolder.clearContext();
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json");

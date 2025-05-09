@@ -2,11 +2,10 @@ CREATE TABLE users (
                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
                        email VARCHAR(255) NOT NULL,
                        password VARCHAR(255),
-                       provider VARCHAR(255) NOT NULL,
-                       provider_id VARCHAR(255),
                        role VARCHAR(255) NOT NULL,
                        CONSTRAINT uk_email UNIQUE (email)
 );
+
 
 CREATE TABLE assignments (
                              id BIGINT AUTO_INCREMENT PRIMARY KEY,

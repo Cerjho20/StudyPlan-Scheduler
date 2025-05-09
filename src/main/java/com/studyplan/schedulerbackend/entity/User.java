@@ -5,11 +5,15 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity
-@Table(name = "users",  // renamed to avoid reserved keywords
+@Table(name = "users",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_provider_providerId", columnNames = {"provider", "provider_id"})
-        })
+                @UniqueConstraint(name = "uk_email", columnNames = {"email"})
+        }
+)
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -18,18 +22,15 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String email;
 
     @Column
     private String password;
 
     @Column(nullable = false)
-    private String provider;
+    private String role;
 
-    @Column(name = "provider_id")
-    private String providerId; // nullable for traditional e.g., Google ID, Facebook ID
-
-    @Column(nullable = false)
-    private String role; // e.g., "USER", "ADMIN"
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<UserIdentity> identities = new ArrayList<>();
 }

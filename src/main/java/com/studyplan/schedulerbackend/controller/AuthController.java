@@ -6,6 +6,7 @@ import com.studyplan.schedulerbackend.repository.UserRepository;
 import com.studyplan.schedulerbackend.service.PasswordResetService;
 import com.studyplan.schedulerbackend.service.TokenService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,6 +19,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.authentication.logout.SecurityContextLogoutHandler;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,6 +28,7 @@ import java.util.List;
 @RequestMapping("/api")
 public class AuthController {
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
+
     private final AuthenticationManager authenticationManager;
     private final TokenService tokenService;
     private final UserRepository userRepository;
@@ -62,6 +65,14 @@ public class AuthController {
         }
     }
 
+    @PostMapping("/logout")
+    public String logout(HttpServletRequest request, HttpServletResponse response) {
+        logger.info("Processing logout request");
+        new SecurityContextLogoutHandler().logout(request, response, null);
+        logger.info("User logged out successfully");
+        return "Logged out successfully";
+    }
+
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest registerRequest) {
         logger.debug("Attempting registration for email={}", registerRequest.getEmail());
@@ -74,11 +85,11 @@ public class AuthController {
             User user = new User();
             user.setEmail(registerRequest.getEmail());
             user.setPassword(passwordEncoder.encode(registerRequest.getPassword()));
-            user.setProvider("local");
-            user.setProviderId(null);
             user.setRole("USER");
             userRepository.save(user);
+
             logger.info("User registered successfully: email={}", registerRequest.getEmail());
+
             Authentication authentication = new UsernamePasswordAuthenticationToken(
                     registerRequest.getEmail(), null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
             String token = tokenService.generateToken(authentication);

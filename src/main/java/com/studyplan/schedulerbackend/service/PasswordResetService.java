@@ -50,7 +50,8 @@ public class PasswordResetService {
     @Transactional
     public void initiatePasswordReset(String email, HttpServletRequest request) throws MessagingException {
         logger.debug("Initiating password reset for email={} from IP={}", email, request.getRemoteAddr());
-        User user = userRepository.findByEmailAndProvider(email, "local")
+        // Lookup user by email only (local users assumed)
+        User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("User not found with email: " + email));
 
         tokenRepository.deleteByUserId(user.getId());
