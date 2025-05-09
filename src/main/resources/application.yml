@@ -1,0 +1,126 @@
+spring:
+  application:
+    name: StudyPlanScheduler
+  datasource:
+    url: jdbc:mysql://localhost:3306/studyplanner?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 30000
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  management:
+    endpoints:
+      web:
+        exposure:
+          include: health, metrics, info
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
+    enabled: true
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${EMAIL_USERNAME:jhocerbarcela@gmail.com}
+    password: ${EMAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+        connectiontimeout: 5000
+        timeout: 5000
+        writetimeout: 5000
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID}
+            client-secret: ${GOOGLE_CLIENT_SECRET}
+            scope:
+              - openid
+              - https://www.googleapis.com/auth/userinfo.profile
+              - https://www.googleapis.com/auth/userinfo.email
+              - https://www.googleapis.com/auth/calendar
+              - https://www.googleapis.com/auth/classroom.courses.readonly
+              - https://www.googleapis.com/auth/classroom.coursework.me
+            redirect-uri: ${app.base-url}/login/oauth2/code/google
+            authorization-grant-type: authorization_code
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://www.googleapis.com/oauth2/v3/userinfo
+            user-name-attribute: email
+  task:
+    scheduling:
+      pool:
+        size: 10
+
+app:
+  base-url: http://localhost:8080
+  frontend-url: ${FRONTEND_URL}
+
+jwt:
+  public-key: ${JWT_PUBLIC_KEY}
+  private-key: ${JWT_PRIVATE_KEY}
+  expiration: 86400000
+
+password-reset:
+  token-expiration: 3600000
+
+rate-limiting:
+  enabled: true
+  login:
+    capacity: 5
+    refill-tokens: 5
+    refill-duration: PT1H
+  signup:
+    capacity: 3
+    refill-tokens: 3
+    refill-duration: PT1H
+  forgot-password:
+    capacity: 3
+    refill-tokens: 3
+    refill-duration: PT1H
+  reset-password:
+    capacity: 3
+    refill-tokens: 3
+    refill-duration: PT1H
+
+logging:
+  level:
+    root: INFO
+    com.studyplan.schedulerbackend: DEBUG
+    org.springframework: INFO
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/scheduler.log
+    max-size: 10MB
+    max-history: 7
+
+server:
+  port: 8080
+  error:
+    include-stacktrace: never
+  servlet:
+    session:
+      tracking-modes: cookie
